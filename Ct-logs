@@ -1,18 +1,27 @@
 #!/bin/bash
 
-# URL for the Google CT Log List JSON
-CT_LOG_LIST_URL="https://www.gstatic.com/ct/log_list/log_list.json"
+# Company name to search for
+COMPANY="Cisco"
 
-# Fetch the CT log list JSON
-response=$(curl -s $CT_LOG_LIST_URL)
+# URL for querying crt.sh
+CRT_SH_URL="https://crt.sh/?q=$COMPANY&output=json"
+
+# Fetch the CT logs related to the specified company
+response=$(curl -s "$CRT_SH_URL")
 
 # Check if the curl command was successful
 if [[ $? -ne 0 ]]; then
-  echo "Error: Failed to fetch the CT log list."
+  echo "Error: Failed to fetch the CT logs."
   exit 1
 fi
 
-# Extract and display the list of CT logs
-echo "List of Certificate Transparency Logs:"
-echo "--------------------------------------"
-echo "$response" | jq -r '.operators[].logs[] | "\(.description) - \(.url)"'
+# Check if there are any results
+if [[ -z "$response" || "$response" == "[]" ]]; then
+  echo "No Certificate Transparency logs found for $COMPANY."
+  exit 0
+fi
+
+# Display the list of CT logs
+echo "List of Certificate Transparency Logs for $COMPANY:"
+echo "---------------------------------------------------"
+echo "$response" | jq -r '.[] | "\(.issuer_name) - \(.common_name) - \(.not_before) to \(.not_after)"'
