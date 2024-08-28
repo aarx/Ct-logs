@@ -21,7 +21,12 @@ if [[ -z "$response" || "$response" == "[]" ]]; then
   exit 0
 fi
 
-# Display the list of CT logs
-echo "List of Certificate Transparency Logs for $COMPANY:"
-echo "---------------------------------------------------"
-echo "$response" | jq -r '.[] | "\(.issuer_name) - \(.common_name) - \(.not_before) to \(.not_after)"'
+# Get the current date in a format compatible with certificate dates
+current_date=$(date +%Y%m%d%H%M%S)
+
+# Display the list of valid CT logs
+echo "List of Valid Certificate Transparency Logs for $COMPANY:"
+echo "---------------------------------------------------------"
+echo "$response" | jq -r --arg current_date "$current_date" \
+    '.[] | select(.not_before <= $current_date and .not_after >= $current_date) | 
+    "\(.issuer_name) - \(.common_name) - Valid from \(.not_before) to \(.not_after)"'
