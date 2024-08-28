@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# URL for the Google CT Log List JSON
+CT_LOG_LIST_URL="https://www.gstatic.com/ct/log_list/log_list.json"
+
+# Fetch the CT log list JSON
+response=$(curl -s $CT_LOG_LIST_URL)
+
+# Check if the curl command was successful
+if [[ $? -ne 0 ]]; then
+  echo "Error: Failed to fetch the CT log list."
+  exit 1
+fi
+
+# Extract and display the list of CT logs
+echo "List of Certificate Transparency Logs:"
+echo "--------------------------------------"
+echo "$response" | jq -r '.operators[].logs[] | "\(.description) - \(.url)"'
