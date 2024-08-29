@@ -22,9 +22,14 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
-# Display the list of all CT logs
-echo "List of Certificate Transparency Logs for $COMPANY:"
-echo "-----------------------------------------------------"
-echo "$response" | jq -r \
-    '.result[].parsed | 
-    "Subject: \(.subject_dn)\nNames: \(.names | join(", "))\nValid from: \(.validity.start) to \(.validity.end)\nSHA-256 Fingerprint: \(.fingerprint_sha256)\n"'
+# Check if the response contains a "result" field
+if echo "$response" | jq -e '.result | length > 0' > /dev/null; then
+  # Display the list of all CT logs
+  echo "List of Certificate Transparency Logs for $COMPANY:"
+  echo "-----------------------------------------------------"
+  echo "$response" | jq -r \
+      '.result[].parsed | 
+      "Subject: \(.subject_dn)\nNames: \(.names | join(", "))\nValid from: \(.validity.start) to \(.validity.end)\nSHA-256 Fingerprint: \(.fingerprint_sha256)\n"'
+else
+  echo "No certificates found for $COMPANY or an error occurred."
+fi
