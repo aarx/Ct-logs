@@ -1,13 +1,20 @@
 #!/bin/bash
 
+# Replace these with your Censys API credentials
+API_ID="your_censys_api_id"
+API_SECRET="your_censys_api_secret"
+
 # Company name to search for
 COMPANY="Cisco"
 
-# URL for querying crt.sh
-CRT_SH_URL="https://crt.sh/?q=$COMPANY&output=json"
+# Base URL for Censys Search API
+CENSYS_API_URL="https://search.censys.io/api/v2/certificates/search"
 
-# Fetch the CT logs related to the specified company
-response=$(curl -s "$CRT_SH_URL")
+# Fetch certificates related to the specified company
+response=$(curl -s -u "$API_ID:$API_SECRET" \
+  -G --data-urlencode "q=parsed.subject.organization: \"$COMPANY\"" \
+  --data-urlencode "fields=parsed.subject_dn,parsed.names,parsed.validity.start,parsed.validity.end,parsed.fingerprint_sha256" \
+  "$CENSYS_API_URL")
 
 # Check if the curl command was successful
 if [[ $? -ne 0 ]]; then
@@ -15,13 +22,9 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
-# Check if there are any results
-if [[ -z "$response" || "$response" == "[]" ]]; then
-  echo "No Certificate Transparency logs found for $COMPANY."
-  exit 0
-fi
-
-# Display the list of CT logs
+# Display the list of all CT logs
 echo "List of Certificate Transparency Logs for $COMPANY:"
-echo "---------------------------------------------------"
-echo "$response" | jq -r '.[] | "\(.issuer_name) - \(.common_name) - \(.not_before) to \(.not_after)"'
+echo "-----------------------------------------------------"
+echo "$response" | jq -r \
+    '.result[].parsed | 
+    "Subject: \(.subject_dn)\nNames: \(.names | join(", "))\nValid from: \(.validity.start) to \(.validity.end)\nSHA-256 Fingerprint: \(.fingerprint_sha256)\n"'
