@@ -1,0 +1,10 @@
+error
+
+Issuer: C=US, O=DigiCert Inc, CN=DigiCert Global G2 TLS RSA SHA256 2020 CA1
+Common Name: www.willscenter.com
+Valid from: 2024-08-30T00:00:00Z to 2025-02-28T23:59:59Z
+Serial Number: Unknown Serial Number
+---
+jq: error (at <stdin>:1): Cannot index string with string "serial_number"
+jq: error (at <stdin>:1): Cannot index string with string "serial_number"
+jq: error (at <stdin>:1): Cannot index string with string "serial_number"
