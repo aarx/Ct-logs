@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# Domain to search for
+DOMAIN="example.com"
+
+# Your CertSpotter API key
+API_KEY="your_certspotter_api_key_here"
+
+# Base URL for the CertSpotter API
+CERTSPOTTER_URL="https://api.certspotter.com/v1/issuances"
+
+# Function to fetch and process results
+fetch_certificates() {
+  local page=1
+  local per_page=100
+
+  while true; do
+    # Fetch the results from CertSpotter
+    response=$(curl -s -G "$CERTSPOTTER_URL" \
+      --data-urlencode "domain=$DOMAIN" \
+      --data-urlencode "expand=dns_names" \
+      --data-urlencode "expand=issuer" \
+      --data-urlencode "expand=not_after" \
+      --data-urlencode "expand=not_before" \
+      -H "Authorization: Bearer $API_KEY" \
+      --data-urlencode "page=$page" \
+      --data-urlencode "per_page=$per_page")
+
+    # Check if the curl command was successful
+    if [[ $? -ne 0 ]]; then
+      echo "Error: Failed to fetch the certificates."
+      exit 1
+    fi
+
+    # Check if the response contains results
+    if [[ -z "$response" || "$response" == "[]" ]]; then
+      break
+    fi
+
+    # Display the certificates
+    echo "$response" | jq -r \
+      '.[] | "Issuer: \(.issuer.name)\nCommon Name: \(.dns_names[])\nValid from: \(.not_before) to \(.not_after)\nSerial Number: \(.serial_number)\n---"'
+
+    # Increment page number
+    page=$((page + 1))
+  done
+}
+
+# Start fetching the certificates
+fetch_certificates
