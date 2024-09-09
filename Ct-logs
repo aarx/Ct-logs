@@ -4,7 +4,7 @@
 DOMAIN="metlife.com"
 
 # Your CertSpotter API key
-API_KEY="your_certspotter_api_key_here"
+API_KEY="k56144_QFDjGN0iEZiAO21z4yCo"
 
 # Base URL for the CertSpotter API
 CERTSPOTTER_URL="https://api.certspotter.com/v1/issuances"
