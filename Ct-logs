@@ -1,35 +1,80 @@
 #!/bin/bash
 
-# Replace these with your Censys API credentials
-API_ID="your_censys_api_id"
-API_SECRET="your_censys_api_secret"
+# Domain to search for
+DOMAIN="metlife.com"
 
-# Company name to search for
-COMPANY="Cisco"
+# Your CertSpotter API key
+API_KEY="your_certspotter_api_key_here"
 
-# Base URL for Censys Search API
-CENSYS_API_URL="https://search.censys.io/api/v2/certificates/search"
+# Base URL for the CertSpotter API
+CERTSPOTTER_URL="https://api.certspotter.com/v1/issuances"
 
-# Fetch certificates related to the specified company
-response=$(curl -s -u "$API_ID:$API_SECRET" \
-  -G --data-urlencode "q=parsed.subject.organization: \"$COMPANY\"" \
-  --data-urlencode "fields=parsed.subject_dn,parsed.names,parsed.validity.start,parsed.validity.end,parsed.fingerprint_sha256" \
-  "$CENSYS_API_URL")
+# Throttling configuration: Add delay (in seconds) between requests
+THROTTLE_DELAY=5  # Set a delay of 5 seconds between API requests
 
-# Check if the curl command was successful
-if [[ $? -ne 0 ]]; then
-  echo "Error: Failed to fetch the CT logs."
-  exit 1
-fi
+# Function to fetch and process results
+fetch_certificates() {
+  local page=1
+  local per_page=100
 
-# Check if the response contains a "result" field
-if echo "$response" | jq -e '.result | length > 0' > /dev/null; then
-  # Display the list of all CT logs
-  echo "List of Certificate Transparency Logs for $COMPANY:"
-  echo "-----------------------------------------------------"
-  echo "$response" | jq -r \
-      '.result[].parsed | 
-      "Subject: \(.subject_dn)\nNames: \(.names | join(", "))\nValid from: \(.validity.start) to \(.validity.end)\nSHA-256 Fingerprint: \(.fingerprint_sha256)\n"'
-else
-  echo "No certificates found for $COMPANY or an error occurred."
-fi
+  while true; do
+    # Fetch the results from CertSpotter
+    response=$(curl -s -G "$CERTSPOTTER_URL" \
+      --data-urlencode "domain=$DOMAIN" \
+      --data-urlencode "expand=dns_names" \
+      --data-urlencode "expand=issuer" \
+      --data-urlencode "expand=not_after" \
+      --data-urlencode "expand=not_before" \
+      -H "Authorization: Bearer $API_KEY" \
+      --data-urlencode "page=$page" \
+      --data-urlencode "per_page=$per_page")
+
+    # Check for rate limiting
+    if echo "$response" | grep -q '"code":"rate_limited"'; then
+      echo "Rate limit exceeded. Please wait and try again later."
+      break
+    fi
+
+    # Check if the curl command was successful
+    if [[ $? -ne 0 ]]; then
+      echo "Error: Failed to fetch the certificates."
+      exit 1
+    fi
+
+    # Check if the response contains results
+    if [[ -z "$response" || "$response" == "[]" ]]; then
+      break
+    fi
+
+    # Display the certificates with error handling for missing fields
+    echo "$response" | jq -r '
+      .[] |
+      "Issuer: \(.issuer.name // "Unknown Issuer")" +
+      (if (.dns_names | type == "array") then
+          "\nCommon Name: \(.dns_names[0] // "Unknown Common Name")"
+       else
+          "\nCommon Name: Unknown Common Name"
+       end) +
+      (if (.not_before and (.not_before | type == "string")) then
+          "\nValid from: \(.not_before)"
+       else
+          "\nValid from: Unknown Start Date"
+       end) +
+      (if (.not_after and (.not_after | type == "string")) then
+          " to \(.not_after)"
+       else
+          " to Unknown End Date"
+       end) +
+      "\n---"
+    '
+
+    # Increment page number
+    page=$((page + 1))
+
+    # Throttle requests to avoid hitting the rate limit
+    sleep $THROTTLE_DELAY
+  done
+}
+
+# Start fetching the certificates
+fetch_certificates
