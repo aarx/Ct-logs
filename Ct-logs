@@ -1,80 +1,109 @@
 #!/bin/bash
 
-# Domain to search for
-DOMAIN="metlife.com"
+# CertSpotter API key
+API_KEY="your_api_key_here"
 
-# Your CertSpotter API key
-API_KEY="k56144_QFDjGN0iEZiAO21z4yCo"
+# Check if the user provided a domain as an argument
+if [ -z "$1" ]; then
+  echo "Usage: $0 <domain>"
+  exit 1
+fi
 
-# Base URL for the CertSpotter API
-CERTSPOTTER_URL="https://api.certspotter.com/v1/issuances"
+# The domain to check
+DOMAIN=$1
 
-# Throttling configuration: Add delay (in seconds) between requests
-THROTTLE_DELAY=5  # Set a delay of 5 seconds between API requests
+# Log start of the process
+echo "Starting CertSpotter API query for domain: $DOMAIN"
 
-# Function to fetch and process results
-fetch_certificates() {
-  local page=1
-  local per_page=100
+# Run the curl command to fetch CT logs from CertSpotter and save the output to a file
+RESPONSE=$(curl -s -u "$API_KEY:" "https://api.certspotter.com/v1/issuances?domain=$DOMAIN&include_subdomains=true&expand=dns_names")
 
-  while true; do
-    # Fetch the results from CertSpotter
-    response=$(curl -s -G "$CERTSPOTTER_URL" \
-      --data-urlencode "domain=$DOMAIN" \
-      --data-urlencode "expand=dns_names" \
-      --data-urlencode "expand=issuer" \
-      --data-urlencode "expand=not_after" \
-      --data-urlencode "expand=not_before" \
-      -H "Authorization: Bearer $API_KEY" \
-      --data-urlencode "page=$page" \
-      --data-urlencode "per_page=$per_page")
+# Check if the response is empty or contains an error
+if [[ -z "$RESPONSE" ]]; then
+  echo "Error: No data received. Please check your API key and domain."
+  exit 1
+fi
 
-    # Check for rate limiting
-    if echo "$response" | grep -q '"code":"rate_limited"'; then
-      echo "Rate limit exceeded. Please wait and try again later."
-      break
-    fi
+# Log successful response
+echo "Received response from CertSpotter API. Saving to temporary file..."
 
-    # Check if the curl command was successful
-    if [[ $? -ne 0 ]]; then
-      echo "Error: Failed to fetch the certificates."
-      exit 1
-    fi
+# Save the JSON response to a temporary file
+echo "$RESPONSE" > response.json
+echo "JSON response saved to response.json."
 
-    # Check if the response contains results
-    if [[ -z "$response" || "$response" == "[]" ]]; then
-      break
-    fi
+# Python script to extract DNS names, perform lookups, and save to an Excel file
+python3 <<EOF
+import json
+import pandas as pd
+import socket
 
-    # Display the certificates with error handling for missing fields
-    echo "$response" | jq -r '
-      .[] |
-      "Issuer: \(.issuer.name // "Unknown Issuer")" +
-      (if (.dns_names | type == "array") then
-          "\nCommon Name: \(.dns_names[0] // "Unknown Common Name")"
-       else
-          "\nCommon Name: Unknown Common Name"
-       end) +
-      (if (.not_before and (.not_before | type == "string")) then
-          "\nValid from: \(.not_before)"
-       else
-          "\nValid from: Unknown Start Date"
-       end) +
-      (if (.not_after and (.not_after | type == "string")) then
-          " to \(.not_after)"
-       else
-          " to Unknown End Date"
-       end) +
-      "\n---"
-    '
+print("Starting Python script execution...")
 
-    # Increment page number
-    page=$((page + 1))
+# Load the JSON response and handle potential errors
+with open('response.json', 'r') as file:
+    try:
+        data = json.loads(file.read())
+        print("Successfully loaded JSON data.")
+    except json.JSONDecodeError:
+        print("Error: Failed to parse JSON response.")
+        exit(1)
 
-    # Throttle requests to avoid hitting the rate limit
-    sleep $THROTTLE_DELAY
-  done
-}
+# Check if the data is a list (CertSpotter API typically returns a list of certificates)
+if not isinstance(data, list):
+    print("Error: Unexpected JSON format. Expected a list of certificates.")
+    print(f"Received data: {type(data)}")
+    exit(1)
 
-# Start fetching the certificates
-fetch_certificates
+# Extract all unique DNS names
+dns_names = set()
+print("Extracting DNS names...")
+for cert in data:
+    dns_names.update(cert.get('dns_names', []))
+
+# Log how many DNS names were found
+print(f"Extracted {len(dns_names)} unique DNS names.")
+
+# Prepare a list to store the results
+results = []
+
+# Function to perform DNS lookup and reverse DNS lookup
+def lookup_domain(domain):
+    try:
+        # Get IP addresses
+        ip_addresses = socket.gethostbyname_ex(domain)[2]
+        reverse_dns = [socket.gethostbyaddr(ip)[0] for ip in ip_addresses]
+        print(f"Lookups successful for domain: {domain}")
+    except socket.gaierror:
+        ip_addresses = ["DNS lookup failed"]
+        reverse_dns = ["Reverse DNS lookup failed"]
+        print(f"DNS lookup failed for domain: {domain}")
+    except socket.herror:
+        reverse_dns = ["Reverse DNS lookup failed"]
+        print(f"Reverse DNS lookup failed for domain: {domain}")
+    
+    return ip_addresses, reverse_dns
+
+# Perform lookups for each DNS name and collect results
+for dns_name in dns_names:
+    print(f"Performing DNS and reverse DNS lookups for: {dns_name}")
+    ip_addresses, reverse_dns = lookup_domain(dns_name)
+    results.append({
+        "DNS Name": dns_name,
+        "IP Addresses": ', '.join(ip_addresses),
+        "Reverse DNS": ', '.join(reverse_dns)
+    })
+
+# Convert the results into a DataFrame
+df = pd.DataFrame(results)
+
+# Log saving the Excel file
+excel_filename = f"${DOMAIN}_dns_names_with_lookups.xlsx"
+df.to_excel(excel_filename, index=False)
+print(f"DNS lookups and reverse DNS results saved to {excel_filename}")
+
+EOF
+
+# Clean up the temporary JSON file
+rm response.json
+echo "Temporary file response.json has been removed."
+echo "Script execution complete."
