@@ -1,10 +1,2 @@
-error
-
-Issuer: C=US, O=DigiCert Inc, CN=DigiCert Global G2 TLS RSA SHA256 2020 CA1
-Common Name: www.willscenter.com
-Valid from: 2024-08-30T00:00:00Z to 2025-02-28T23:59:59Z
-Serial Number: Unknown Serial Number
----
-jq: error (at <stdin>:1): Cannot index string with string "serial_number"
-jq: error (at <stdin>:1): Cannot index string with string "serial_number"
-jq: error (at <stdin>:1): Cannot index string with string "serial_number"
+└─$ curl -u "k56144_QFDjGN0iEZiAO21z4yCo:" "https://api.certspotter.com/v1/issuances?domain=metlife.com&include_subdomains=true&expand=dns_names"
+{"code":"timeout","message":"This query took longer than 15 seconds to complete.  This typically happens when searching domains with a huge number of sub-domains or certificates.  To enable a longer query timeout, upgrade your subscription by visiting <https://sslmate.com/account/ct_search_api>.  To speed up the execution of this query, we can provision a dedicated index for metlife.com.  Email support@sslmate.com with your username (Arx) and the name of the domain you need to search (metlife.com)."}
