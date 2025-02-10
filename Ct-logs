@@ -1,35 +1,140 @@
-#!/bin/bash
+import requests
+import pandas as pd
+import os
+import socket
+import logging
+import time
 
-# Replace these with your Censys API credentials
-API_ID="your_censys_api_id"
-API_SECRET="your_censys_api_secret"
+# Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Company name to search for
-COMPANY="Cisco"
+# CertSpotter API key
+API_KEY = 'k56144_QFDjGN0iEZiAO21z4yCo'
 
-# Base URL for Censys Search API
-CENSYS_API_URL="https://search.censys.io/api/v2/certificates/search"
+# URL for CertSpotter API
+BASE_URL = "https://api.certspotter.com/v1/issuances"
 
-# Fetch certificates related to the specified company
-response=$(curl -s -u "$API_ID:$API_SECRET" \
-  -G --data-urlencode "q=parsed.subject.organization: \"$COMPANY\"" \
-  --data-urlencode "fields=parsed.subject_dn,parsed.names,parsed.validity.start,parsed.validity.end,parsed.fingerprint_sha256" \
-  "$CENSYS_API_URL")
+# Auth header and API key
+headers = {
+    'Authorization': f'Bearer {API_KEY}'
+}
 
-# Check if the curl command was successful
-if [[ $? -ne 0 ]]; then
-  echo "Error: Failed to fetch the CT logs."
-  exit 1
-fi
+# Loop for domain names from domains.txt
+logging.info('Reading domain names from domains.txt...')
+with open('domains.txt', 'r') as file:
+    domains = [line.strip() for line in file.readlines()]
 
-# Check if the response contains a "result" field
-if echo "$response" | jq -e '.result | length > 0' > /dev/null; then
-  # Display the list of all CT logs
-  echo "List of Certificate Transparency Logs for $COMPANY:"
-  echo "-----------------------------------------------------"
-  echo "$response" | jq -r \
-      '.result[].parsed | 
-      "Subject: \(.subject_dn)\nNames: \(.names | join(", "))\nValid from: \(.validity.start) to \(.validity.end)\nSHA-256 Fingerprint: \(.fingerprint_sha256)\n"'
-else
-  echo "No certificates found for $COMPANY or an error occurred."
-fi
+# Set to store unique domain names
+unique_domains = set()
+
+# Loop domain names in the text file
+for domain in domains:
+    logging.info(f"Fetching CT logs for domain: {domain}")
+    params = {
+        'domain': domain,
+        'include_subdomains': 'true',
+        'expand': ['dns_names']
+    }
+
+    # Request to the CertSpotter API
+    response = requests.get(BASE_URL, headers=headers, params=params)
+
+    # Check if the request was successful
+    if response.status_code == 200:
+        # Parse the response JSON
+        data = response.json()
+
+        # Loop through the issuances to extract DNS names
+        for issuance in data:
+            dns_names = issuance.get('dns_names', [])
+            for dns_name in dns_names:
+                unique_domains.add(dns_name)
+        logging.info(f"Found {len(dns_names)} DNS names for {domain}.")
+    else:
+        logging.error(f"Failed to fetch data for {domain}. Status code: {response.status_code}")
+
+# Check if the Excel file exists
+excel_filename = 'unique_domains.xlsx'
+logging.info(f"Checking for existing unique_domains.xlsx at {excel_filename}...")
+
+if os.path.exists(excel_filename):
+    logging.info("Reading existing data from unique_domains.xlsx...")
+    existing_df = pd.read_excel(excel_filename, sheet_name='Sheet1')
+    existing_domains = set(existing_df['Domain Name'].tolist())
+else:
+    existing_domains = set()
+
+# Find new unique domains by removing the already existing ones
+new_domains = unique_domains - existing_domains
+logging.info(f"Found {len(new_domains)} new unique domains to process.")
+
+# Now compare with the eai-domains.xlsx file
+eai_domains_filename = 'eai-domains.xlsx'
+if os.path.exists(eai_domains_filename):
+    logging.info("Comparing new domains with eai-domains.xlsx...")
+    eai_df = pd.read_excel(eai_domains_filename, sheet_name='Sheet1')
+    eai_domains = set(eai_df['Domain Name'].tolist())
+else:
+    eai_domains = set()
+
+# Prepare list to store results (new domains and lookups)
+domain_results = []
+
+# If there are new domains, append them to the existing Excel file
+if new_domains:
+    for domain in new_domains:
+        logging.info(f"Processing domain: {domain}")
+        # Compare with eai-domains
+        if domain not in eai_domains:
+            nslookup_info = {'Domain Name': domain, 'Status': 'new', 'IP Addresses': '', 'Reverse Lookup': ''}
+
+            try:
+                logging.info(f"Performing nslookup for domain: {domain}")
+                # Perform nslookup
+                start_time = time.time()
+                ip_addresses = socket.gethostbyname_ex(domain)[2]
+                nslookup_info['IP Addresses'] = ', '.join(ip_addresses)
+                logging.info(f"nslookup completed for {domain}. IPs: {ip_addresses} (Time taken: {time.time() - start_time:.2f} seconds)")
+
+                reverse_lookups = []
+                for ip in ip_addresses:
+                    try:
+                        logging.info(f"Performing reverse nslookup for IP: {ip}")
+                        start_time = time.time()
+                        reverse_host = socket.gethostbyaddr(ip)[0]
+                        reverse_lookups.append(reverse_host)
+                        logging.info(f"Reverse nslookup completed for {ip}: {reverse_host} (Time taken: {time.time() - start_time:.2f} seconds)")
+                    except socket.herror:
+                        reverse_lookups.append('No reverse lookup available')
+
+                nslookup_info['Reverse Lookup'] = ', '.join(reverse_lookups)
+            except socket.gaierror:
+                nslookup_info['IP Addresses'] = 'nslookup failed'
+                nslookup_info['Reverse Lookup'] = 'N/A'
+                logging.error(f"nslookup failed for domain: {domain}")
+
+            # Append result
+            domain_results.append(nslookup_info)
+
+    # Convert results to a DataFrame
+    new_df = pd.DataFrame(domain_results)
+
+    # Append new data to existing Excel file (to the same sheet)
+    if os.path.exists(excel_filename):
+        logging.info("Appending new domains to existing unique_domains.xlsx...")
+        existing_df = pd.read_excel(excel_filename, sheet_name='Sheet1')
+        updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+
+        # Write back to the same sheet (without creating a new one)
+        with pd.ExcelWriter(excel_filename, mode='w', engine='openpyxl') as writer:
+            updated_df.to_excel(writer, index=False, sheet_name='Sheet1')
+        logging.info(f"Appended {len(new_domains)} new domains to unique_domains.xlsx.")
+    else:
+        # If the file does not exist, create a new one
+        logging.info("Creating new unique_domains.xlsx with new domains...")
+        with pd.ExcelWriter(excel_filename, mode='w', engine='openpyxl') as writer:
+            new_df.to_excel(writer, index=False, sheet_name='Sheet1')
+
+    logging.info(f"Completed writing {len(new_domains)} new domain names to {excel_filename}.")
+else:
+    logging.info("No new domain names found.")
