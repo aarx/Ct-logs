@@ -9,7 +9,7 @@ import time
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # CertSpotter API key
-API_KEY = 'xxxxxxxx'
+API_KEY = 'k56144_QFDjGN0iEZiAO21z4yCo'
 
 # URL for CertSpotter API
 BASE_URL = "https://api.certspotter.com/v1/issuances"
@@ -19,13 +19,13 @@ headers = {
     'Authorization': f'Bearer {API_KEY}'
 }
 
-# Loop for domain names from domains.txt
+# Read domain names from domains.txt
 logging.info('Reading domain names from domains.txt...')
 with open('domains.txt', 'r') as file:
     domains = [line.strip() for line in file.readlines()]
 
-# Set to store unique domain names
-unique_domains = set()
+# Set to store unique domain details
+unique_domains = {}
 
 # Loop domain names in the text file
 for domain in domains:
@@ -36,19 +36,23 @@ for domain in domains:
         'expand': ['dns_names']
     }
 
-    # Request to the CertSpotter API
     response = requests.get(BASE_URL, headers=headers, params=params)
 
-    # Check if the request was successful
     if response.status_code == 200:
-        # Parse the response JSON
         data = response.json()
-
-        # Loop through the issuances to extract DNS names
+        
         for issuance in data:
+            not_before = issuance.get('not_before', '')
+            not_after = issuance.get('not_after', '')
+            revoked = issuance.get('revoked', False)
+            
             dns_names = issuance.get('dns_names', [])
             for dns_name in dns_names:
-                unique_domains.add(dns_name)
+                unique_domains[dns_name] = {
+                    'Not Before': not_before,
+                    'Not After': not_after,
+                    'Revoked': revoked
+                }
         logging.info(f"Found {len(dns_names)} DNS names for {domain}.")
     else:
         logging.error(f"Failed to fetch data for {domain}. Status code: {response.status_code}")
@@ -65,72 +69,61 @@ else:
     existing_domains = set()
 
 # Find new unique domains by removing the already existing ones
-new_domains = unique_domains - existing_domains
+new_domains = {k: v for k, v in unique_domains.items() if k not in existing_domains}
 logging.info(f"Found {len(new_domains)} new unique domains to process.")
 
-# Now compare with the eai-domains.xlsx file
-eai_domains_filename = 'eai-domains.xlsx'
-if os.path.exists(eai_domains_filename):
-    logging.info("Comparing new domains with eai-domains.xlsx...")
-    eai_df = pd.read_excel(eai_domains_filename, sheet_name='Sheet1')
-    eai_domains = set(eai_df['Domain Name'].tolist())
-else:
-    eai_domains = set()
-
-# Prepare list to store results (new domains and lookups)
+# Prepare list to store results
 domain_results = []
 
-# If there are new domains, append them to the existing Excel file
 if new_domains:
-    for domain in new_domains:
+    for domain, details in new_domains.items():
         logging.info(f"Processing domain: {domain}")
-        # Compare with eai-domains
-        if domain not in eai_domains:
-            nslookup_info = {'Domain Name': domain, 'Status': 'new', 'IP Addresses': '', 'Reverse Lookup': ''}
+        nslookup_info = {
+            'Domain Name': domain,
+            'Not Before': details['Not Before'],
+            'Not After': details['Not After'],
+            'Revoked': details['Revoked'],
+            'IP Addresses': '',
+            'Reverse Lookup': ''
+        }
 
-            try:
-                logging.info(f"Performing nslookup for domain: {domain}")
-                # Perform nslookup
-                start_time = time.time()
-                ip_addresses = socket.gethostbyname_ex(domain)[2]
-                nslookup_info['IP Addresses'] = ', '.join(ip_addresses)
-                logging.info(f"nslookup completed for {domain}. IPs: {ip_addresses} (Time taken: {time.time() - start_time:.2f} seconds)")
+        try:
+            logging.info(f"Performing nslookup for domain: {domain}")
+            start_time = time.time()
+            ip_addresses = socket.gethostbyname_ex(domain)[2]
+            nslookup_info['IP Addresses'] = ', '.join(ip_addresses)
+            logging.info(f"nslookup completed for {domain}. IPs: {ip_addresses} (Time taken: {time.time() - start_time:.2f} seconds)")
 
-                reverse_lookups = []
-                for ip in ip_addresses:
-                    try:
-                        logging.info(f"Performing reverse nslookup for IP: {ip}")
-                        start_time = time.time()
-                        reverse_host = socket.gethostbyaddr(ip)[0]
-                        reverse_lookups.append(reverse_host)
-                        logging.info(f"Reverse nslookup completed for {ip}: {reverse_host} (Time taken: {time.time() - start_time:.2f} seconds)")
-                    except socket.herror:
-                        reverse_lookups.append('No reverse lookup available')
+            reverse_lookups = []
+            for ip in ip_addresses:
+                try:
+                    logging.info(f"Performing reverse nslookup for IP: {ip}")
+                    start_time = time.time()
+                    reverse_host = socket.gethostbyaddr(ip)[0]
+                    reverse_lookups.append(reverse_host)
+                    logging.info(f"Reverse nslookup completed for {ip}: {reverse_host} (Time taken: {time.time() - start_time:.2f} seconds)")
+                except socket.herror:
+                    reverse_lookups.append('No reverse lookup available')
 
-                nslookup_info['Reverse Lookup'] = ', '.join(reverse_lookups)
-            except socket.gaierror:
-                nslookup_info['IP Addresses'] = 'nslookup failed'
-                nslookup_info['Reverse Lookup'] = 'N/A'
-                logging.error(f"nslookup failed for domain: {domain}")
+            nslookup_info['Reverse Lookup'] = ', '.join(reverse_lookups)
+        except socket.gaierror:
+            nslookup_info['IP Addresses'] = 'nslookup failed'
+            nslookup_info['Reverse Lookup'] = 'N/A'
+            logging.error(f"nslookup failed for domain: {domain}")
 
-            # Append result
-            domain_results.append(nslookup_info)
+        domain_results.append(nslookup_info)
 
-    # Convert results to a DataFrame
     new_df = pd.DataFrame(domain_results)
 
-    # Append new data to existing Excel file (to the same sheet)
     if os.path.exists(excel_filename):
         logging.info("Appending new domains to existing unique_domains.xlsx...")
         existing_df = pd.read_excel(excel_filename, sheet_name='Sheet1')
         updated_df = pd.concat([existing_df, new_df], ignore_index=True)
 
-        # Write back to the same sheet (without creating a new one)
         with pd.ExcelWriter(excel_filename, mode='w', engine='openpyxl') as writer:
             updated_df.to_excel(writer, index=False, sheet_name='Sheet1')
         logging.info(f"Appended {len(new_domains)} new domains to unique_domains.xlsx.")
     else:
-        # If the file does not exist, create a new one
         logging.info("Creating new unique_domains.xlsx with new domains...")
         with pd.ExcelWriter(excel_filename, mode='w', engine='openpyxl') as writer:
             new_df.to_excel(writer, index=False, sheet_name='Sheet1')
