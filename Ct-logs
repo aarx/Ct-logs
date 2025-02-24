@@ -9,7 +9,7 @@ import time
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # CertSpotter API key
-API_KEY = 'k56144_QFDjGN0iEZiAO21z4yCo'
+API_KEY = 'xxxxx'
 
 # URL for CertSpotter API
 BASE_URL = "https://api.certspotter.com/v1/issuances"
